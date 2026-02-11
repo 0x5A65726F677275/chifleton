@@ -19,6 +19,9 @@ venv/
 .coverage
 htmlcov/
 
+# PyPI upload (never commit real token)
+.pypirc
+
 # IDE / OS
 .idea/
 .vscode/

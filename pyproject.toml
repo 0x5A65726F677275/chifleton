@@ -7,7 +7,7 @@ name = "chifleton"
 version = "0.2.1"
 description = "Chifleton — lightweight dependency vulnerability scanner using OSV.dev"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
 requires-python = ">=3.10"
 authors = [{ name = "Jaeha Yoo" }]
 keywords = ["security", "vulnerability", "dependencies", "osv", "supply-chain"]
@@ -15,7 +15,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -32,6 +31,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-cov>=4.0"]
+
+[project.urls]
+Homepage = "https://github.com/0x5A65726F677275/Chifleton"
+Documentation = "https://github.com/0x5A65726F677275/Chifleton#readme"
+Repository = "https://github.com/0x5A65726F677275/Chifleton"
 
 [project.scripts]
 chifleton = "scanner.cli:main"
