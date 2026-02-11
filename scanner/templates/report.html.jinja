@@ -1,0 +1,1093 @@
+{# Government-ready compliance report: KPIs, severity charts, executive summary, filters, PDF export. Keep in sync with templates/report.html.jinja #}
+{% set sd = severity_distribution %}
+{% set total_sd = sd.Critical + sd.High + sd.Medium + sd.Low + sd.Unknown %}
+{% set highest_severity = 'Critical' if sd.Critical > 0 else ('High' if sd.High > 0 else ('Medium' if sd.Medium > 0 else ('Low' if sd.Low > 0 else ('Unknown' if sd.Unknown > 0 else 'None')))) %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vulnerability Scan Report — Chifleton</title>
+  <style>
+    /* CISA-inspired palette: https://www.cisa.gov/ — header #005288, accent #002b47 */
+    :root {
+      --bg: #f5f7f9;
+      --surface: #ffffff;
+      --text: #002b47;
+      --text-muted: #4a6572;
+      --border: #c9d3dc;
+      --link: #005288;
+      --link-hover: #002b47;
+      --critical: #b21c2e;
+      --critical-bg: #f9eae9;
+      --high: #c05600;
+      --high-bg: #fef5eb;
+      --medium: #776017;
+      --medium-bg: #faf3e3;
+      --low: #2e7d32;
+      --low-bg: #e8f5e9;
+      --unknown: #5c6f82;
+      --unknown-bg: #f0f0f0;
+      --nav-bg: #005288;
+      --nav-text: #ffffff;
+      --nav-hover: #003d66;
+      --gov-blue-light: #e3eef5;
+      --focus-ring: 2px solid #005288;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.6;
+      font-size: 1rem;
+      padding-top: 3.5rem;
+    }
+    body:focus { outline: none; }
+    a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+
+    .skip-link {
+      position: absolute;
+      top: -2.5rem;
+      left: 0.5rem;
+      background: var(--nav-bg);
+      color: var(--nav-text);
+      padding: 0.5rem 1rem;
+      z-index: 200;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .skip-link:focus { top: 0.5rem; }
+
+    .report-header {
+      background: var(--surface);
+      padding: 1.5rem 1.75rem;
+      margin-bottom: 1.25rem;
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--nav-bg);
+    }
+    .report-header h1 { font-size: 1.75rem; font-weight: 700; margin: 0 0 0.5rem 0; color: var(--text); }
+    .report-header .meta { font-size: 0.9375rem; color: var(--text-muted); margin: 0; }
+    .report-header .meta span { margin-right: 1.25rem; }
+
+    nav.report-nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: var(--nav-bg);
+      color: var(--nav-text);
+      padding: 0.6rem 1.25rem;
+      z-index: 100;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      border-bottom: 1px solid rgba(0,0,0,0.1);
+    }
+    nav.report-nav a {
+      color: var(--nav-text);
+      text-decoration: none;
+      padding: 0.4rem 0.75rem;
+      font-size: 0.9375rem;
+      font-weight: 600;
+    }
+    nav.report-nav a:hover { background: var(--nav-hover); }
+    nav.report-nav .nav-brand { font-weight: 700; margin-right: 0.75rem; font-size: 1.1rem; }
+    nav.report-nav .nav-btn-pdf { margin-left: auto; padding: 0.4rem 1rem; background: rgba(255,255,255,0.2); color: var(--nav-text); border: 1px solid rgba(255,255,255,0.4); font-size: 0.9rem; font-weight: 600; cursor: pointer; font-family: inherit; }
+    nav.report-nav .nav-btn-pdf:hover { background: var(--nav-hover); }
+
+    main.container { max-width: none; width: 100%; margin: 0; padding: 0 1.75rem 2.5rem; }
+
+    section { scroll-margin-top: 4rem; margin-bottom: 2.25rem; }
+    section h2 { font-size: 1.25rem; font-weight: 700; margin: 0 0 1rem 0; color: var(--text); border-bottom: 2px solid var(--nav-bg); padding-bottom: 0.5rem; }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 1.25rem;
+      margin-bottom: 1.75rem;
+    }
+    .kpi-card {
+      background: var(--surface);
+      padding: 1.5rem 1rem;
+      border: 1px solid var(--border);
+      text-align: center;
+    }
+    .kpi-card .kpi-value { font-size: 1.875rem; font-weight: 700; display: block; color: var(--text); }
+    .kpi-card .kpi-label { font-size: 0.875rem; color: var(--text-muted); margin-top: 0.35rem; }
+    .kpi-card.highest-sev .kpi-value.critical { color: var(--critical); }
+    .kpi-card.highest-sev .kpi-value.high { color: var(--high); }
+    .kpi-card.highest-sev .kpi-value.medium { color: var(--medium); }
+    .kpi-card.highest-sev .kpi-value.low { color: var(--low); }
+
+    .exec-summary {
+      background: var(--surface);
+      padding: 1.75rem 2rem;
+      margin-bottom: 1.75rem;
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--link);
+    }
+    .exec-summary h2 { border: none; margin-top: 0; border-bottom: none; padding: 0; }
+    .exec-summary p { margin: 0 0 1rem 0; font-size: 1rem; line-height: 1.65; }
+    .exec-summary p:last-child { margin-bottom: 0; }
+
+    .chart-desc { font-size: 0.875rem; color: var(--text-muted); margin-top: 0.75rem; max-width: 65ch; }
+
+    .severity-charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.25rem; }
+    @media (max-width: 768px) { .severity-charts-row { grid-template-columns: 1fr; } }
+    .severity-chart-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem 1.75rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+    .severity-chart-card h3 { font-size: 1rem; font-weight: 700; margin: 0 0 1rem 0; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
+    .severity-chart {
+      background: transparent;
+      padding: 0;
+      margin-bottom: 0;
+      border: none;
+    }
+    .severity-chart .bar-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.85rem; font-size: 0.875rem; min-height: 2rem; }
+    .severity-chart .bar-label { width: 5.5rem; flex-shrink: 0; font-weight: 600; color: var(--text); }
+    .severity-chart .bar-wrap { flex: 1; max-width: 100%; height: 1.75rem; background: var(--bg); overflow: hidden; border-radius: 6px; }
+    .severity-chart .bar-fill { height: 100%; min-width: 3px; border-radius: 6px; transition: width 0.3s ease; }
+    .severity-chart .bar-fill.critical { background: var(--critical); }
+    .severity-chart .bar-fill.high { background: var(--high); }
+    .severity-chart .bar-fill.medium { background: var(--medium); }
+    .severity-chart .bar-fill.low { background: var(--low); }
+    .severity-chart .bar-fill.unknown { background: var(--unknown); }
+    .severity-chart .bar-num { width: 2.75rem; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text); }
+
+    .stacked-chart { background: transparent; padding: 0; margin-bottom: 0; border: none; }
+    .stacked-chart .pkg-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.65rem; font-size: 0.8125rem; min-height: 1.75rem; }
+    .stacked-chart .pkg-name { width: 10rem; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+    .stacked-chart .pkg-bar { flex: 1; max-width: 100%; height: 1.25rem; display: flex; overflow: hidden; background: var(--bg); border-radius: 6px; }
+    .stacked-chart .pkg-bar span { min-width: 2px; border-radius: 2px; }
+    .stacked-chart .pkg-bar .sev-critical { background: var(--critical); }
+    .stacked-chart .pkg-bar .sev-high { background: var(--high); }
+    .stacked-chart .pkg-bar .sev-medium { background: var(--medium); }
+    .stacked-chart .pkg-bar .sev-low { background: var(--low); }
+    .stacked-chart .pkg-bar .sev-unknown { background: var(--unknown); }
+    .stacked-chart .pkg-num { width: 2.75rem; flex-shrink: 0; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text); }
+
+    .vuln-detail-expanded-row { background: var(--surface); }
+    .vuln-detail-expanded-row td { padding: 0; vertical-align: top; border-bottom: 1px solid var(--border); box-shadow: inset 0 3px 6px rgba(0,0,0,0.04); }
+    .vuln-detail-expanded-inner { padding: 1rem 1.25rem 1rem 2rem; max-height: 70vh; overflow-y: auto; }
+    .vuln-detail-expanded-inner .vuln-detail-expanded-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); font-weight: 600; }
+    .vuln-detail-expanded-inner .vuln-detail-expanded-close { padding: 0.25rem 0.5rem; font-size: 0.9rem; cursor: pointer; background: transparent; border: 1px solid var(--border); border-radius: 4px; }
+    .vuln-detail-expanded-inner .vuln-block { margin-bottom: 1.25rem; padding: 1.25rem; border-left: 4px solid var(--border); background: #fafafa; }
+    .vuln-detail-expanded-inner .vuln-block:last-child { margin-bottom: 0; }
+    .vuln-detail-expanded-inner .vuln-block.severity-critical { border-left-color: var(--critical); background: var(--critical-bg); }
+    .vuln-detail-expanded-inner .vuln-block.severity-high { border-left-color: var(--high); background: var(--high-bg); }
+    .vuln-detail-expanded-inner .vuln-block.severity-medium { border-left-color: var(--medium); background: var(--medium-bg); }
+    .vuln-detail-expanded-inner .vuln-block.severity-low { border-left-color: var(--low); background: var(--low-bg); }
+    .vuln-detail-expanded-inner .vuln-block h4 { font-size: 0.95rem; margin: 0 0 0.5rem 0; }
+    .vuln-detail-expanded-inner .vuln-block .vuln-ids { font-family: ui-monospace, monospace; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem; }
+    .vuln-detail-expanded-inner .vuln-block .vuln-section { margin-top: 0.75rem; font-size: 0.9rem; }
+    .vuln-detail-expanded-inner .vuln-block details summary { cursor: pointer; font-weight: 600; font-size: 0.85rem; }
+    .vuln-detail-expanded-inner .vuln-block ul { margin: 0.25rem 0 0 1rem; padding-left: 1rem; }
+    .vuln-card-detail { display: none; margin-top: 0.5rem; padding: 1rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    .vuln-card-detail.open { display: block; }
+    .vuln-card-detail .vuln-detail-expanded-close { margin-bottom: 0.75rem; }
+    a.view-details-link { cursor: pointer; }
+
+    .pie-chart-wrap { display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap; }
+    .pie-chart-circle { width: 200px; height: 200px; flex-shrink: 0; border-radius: 50%; background: var(--bg); }
+    .pie-chart-legend { flex: 1; min-width: 140px; font-size: 0.8125rem; max-height: 220px; overflow-y: auto; }
+    .pie-chart-legend li { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem; cursor: default; }
+    .pie-chart-legend .pie-legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .pie-chart-legend .pie-legend-pct { font-variant-numeric: tabular-nums; font-weight: 600; margin-left: auto; }
+
+    .filters-panel {
+      background: var(--surface);
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1.75rem;
+      border: 1px solid var(--border);
+    }
+    .filters-panel h2 { font-size: 1.1rem; margin: 0 0 0.75rem 0; border: none; padding: 0; }
+    .filters-row { display: flex; flex-wrap: wrap; gap: 1.75rem 2rem; align-items: flex-start; }
+    .filter-group { display: flex; flex-direction: column; gap: 0.35rem; }
+    .filter-group label, .filter-group .filter-label { font-size: 0.875rem; font-weight: 500; }
+    .filter-group input[type="text"] { padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 4px; font-size: 0.9rem; min-width: 10rem; }
+    .filter-group input.filter-id { min-width: 12rem; }
+    .filter-group-multi .filter-checkboxes { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; }
+    .filter-check { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.875rem; font-weight: normal; cursor: pointer; }
+    .filter-check input { margin: 0; }
+
+    .table-wrap { overflow-x: auto; margin-bottom: 1rem; -webkit-overflow-scrolling: touch; }
+    .report-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      font-size: 0.9375rem;
+    }
+    .report-table th, .report-table td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
+    .report-table th { font-weight: 700; background: var(--gov-blue-light); color: var(--text); }
+    .report-table tr:last-child td { border-bottom: none; }
+    .report-table tr:hover { background: #f7f9fa; }
+    .report-table tr.hidden { display: none; }
+    .report-table tr.vuln-row-page-hidden { display: none; }
+    .report-table .remediation-link { font-size: 0.85rem; }
+    button.link-style { background: none; border: none; color: var(--link); text-decoration: underline; cursor: pointer; font-family: inherit; font-size: inherit; padding: 0; }
+    button.link-style:hover { color: var(--link-hover); }
+
+    .vuln-details-pagination { display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin: 1.25rem 0; flex-wrap: wrap; }
+    .vuln-details-pagination .page-btn {
+      min-width: 2.25rem; height: 2.25rem; padding: 0 0.5rem;
+      border: 1px solid var(--border); background: var(--surface);
+      cursor: pointer; font-size: 0.9rem; font-family: inherit; color: var(--text);
+    }
+    .vuln-details-pagination .page-btn:hover:not(:disabled) { background: var(--gov-blue-light); }
+    .vuln-details-pagination .page-btn.active { background: var(--nav-bg); color: #fff; border-color: var(--nav-bg); }
+    .vuln-details-pagination .page-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .vuln-details-pagination .page-info { font-size: 0.9rem; color: var(--text-muted); margin: 0 0.25rem; }
+    .vuln-card.vuln-row-page-hidden { display: none; }
+
+    .badge {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      padding: 0.2rem 0.5rem;
+    }
+    .badge.critical { background: var(--critical-bg); color: var(--critical); }
+    .badge.high { background: var(--high-bg); color: var(--high); }
+    .badge.medium { background: var(--medium-bg); color: var(--medium); }
+    .badge.low { background: var(--low-bg); color: var(--low); }
+    .badge.unknown { background: var(--unknown-bg); color: var(--unknown); }
+    .badge.status-active { background: var(--gov-blue-light); color: var(--link); }
+    .badge.status-fixed { background: var(--low-bg); color: var(--low); }
+    .badge.status-withdrawn { background: #e9ecef; color: #495057; }
+    .badge.status-unknown { background: var(--unknown-bg); color: var(--unknown); }
+
+    .vuln-cards { display: none; }
+    .vuln-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+    }
+    .vuln-card .vuln-card-pkg { font-weight: 600; margin-bottom: 0.5rem; }
+    .vuln-card .vuln-card-id { font-family: ui-monospace, monospace; font-size: 0.85rem; color: var(--text-muted); }
+    .vuln-card.hidden { display: none; }
+
+    .pkg-card {
+      background: var(--surface);
+      margin-bottom: 1.25rem;
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+    .pkg-card.hidden { display: none; }
+    .pkg-card-header {
+      padding: 1rem 1.25rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      font-weight: 600;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      min-height: 3rem;
+    }
+    .pkg-card-header:hover { background: var(--gov-blue-light); }
+    .pkg-card-header .pkg-name { font-size: 1rem; flex: 1 1 auto; margin-right: 0.5rem; }
+    .pkg-card-header .pkg-meta { font-size: 0.9rem; color: var(--text-muted); font-weight: 500; flex-shrink: 0; }
+    .pkg-card-body { padding: 1.25rem 1.25rem; }
+    .pkg-card-body .vuln-block {
+      margin-bottom: 1.25rem;
+      padding: 1.25rem;
+      border-left: 4px solid var(--border);
+      background: #fafafa;
+    }
+    .pkg-card-body .vuln-block:last-child { margin-bottom: 0; }
+    .pkg-card-body .vuln-block.severity-critical { border-left-color: var(--critical); background: var(--critical-bg); }
+    .pkg-card-body .vuln-block.severity-high { border-left-color: var(--high); background: var(--high-bg); }
+    .pkg-card-body .vuln-block.severity-medium { border-left-color: var(--medium); background: var(--medium-bg); }
+    .pkg-card-body .vuln-block.severity-low { border-left-color: var(--low); background: var(--low-bg); }
+    .pkg-card-body .vuln-block h4 { font-size: 0.95rem; margin: 0 0 0.5rem 0; }
+    .pkg-card-body .vuln-block .vuln-ids { font-family: ui-monospace, monospace; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem; }
+    .pkg-card-body .vuln-block .vuln-section { margin-top: 0.75rem; font-size: 0.9rem; }
+    .pkg-card-body .vuln-block details summary { cursor: pointer; font-weight: 600; font-size: 0.85rem; }
+    .pkg-card-body .vuln-block ul { margin: 0.25rem 0 0 1rem; padding-left: 1rem; }
+    a { color: var(--link); text-decoration: none; }
+    a:hover { color: var(--link-hover); text-decoration: underline; }
+
+    .vuln-details-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    .vuln-details-header h2 { margin: 0; flex: 1 1 auto; }
+    .vuln-details-header .export-panel { margin: 0; padding: 0; border: none; background: transparent; flex-shrink: 0; }
+    .export-panel { background: var(--surface); padding: 1.25rem 1.5rem; margin-bottom: 1.75rem; border: 1px solid var(--border); }
+    .export-panel .btn {
+      display: inline-block;
+      padding: 0.5rem 1.5rem;
+      background: var(--nav-bg);
+      color: #fff;
+      border: none;
+      font-size: 0.9375rem;
+      cursor: pointer;
+      font-family: inherit;
+      font-weight: 600;
+    }
+    .export-panel .btn:hover { background: var(--nav-hover); }
+
+    .data-source-meta {
+      background: var(--surface);
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1.75rem;
+      border: 1px solid var(--border);
+      font-size: 0.9375rem;
+      color: var(--text-muted);
+    }
+    .data-source-meta dt { font-weight: 600; color: var(--text); margin-top: 0.75rem; }
+    .data-source-meta dt:first-child { margin-top: 0; }
+    .data-source-meta dd { margin: 0.35rem 0 0 0; }
+
+    .pagination { display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin: 1.5rem 0; flex-wrap: wrap; }
+    .pagination .page-btn {
+      min-width: 2.25rem; height: 2.25rem; padding: 0 0.5rem;
+      border: 1px solid var(--border); background: var(--surface);
+      cursor: pointer; font-size: 0.9rem; font-family: inherit; color: var(--text);
+    }
+    .pagination .page-btn:hover:not(:disabled) { background: var(--gov-blue-light); }
+    .pagination .page-btn.active { background: var(--nav-bg); color: #fff; border-color: var(--nav-bg); }
+    .pagination .page-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .pagination .page-info { font-size: 0.9rem; color: var(--text-muted); margin: 0 0.25rem; }
+    .pkg-card.pkg-page-hidden { display: none; }
+
+    .pkg-tabs { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 1rem; border-bottom: 2px solid var(--border); padding-bottom: 0; min-height: 2.5rem; }
+    .pkg-tab { padding: 0.5rem 1rem; font-size: 0.9rem; font-weight: 500; background: var(--bg); border: 1px solid var(--border); border-bottom: none; cursor: pointer; font-family: inherit; color: var(--text); border-radius: 4px 4px 0 0; margin-bottom: -2px; }
+    .pkg-tab:hover { background: var(--gov-blue-light); }
+    .pkg-tab.active { background: var(--surface); color: var(--nav-bg); border-color: var(--border); border-bottom: 2px solid var(--surface); }
+    .pkg-tab.hidden { display: none; }
+    .pkg-tab-panel.hidden { display: none !important; }
+    .pkg-tab .pkg-tab-badge { font-size: 0.75rem; margin-left: 0.35rem; opacity: 0.9; }
+    .pkg-tab-panels { background: var(--surface); border: 1px solid var(--border); border-top: none; padding: 1.25rem 1.5rem; }
+    .pkg-tab-panel { display: none; }
+    .pkg-tab-panel.active { display: block; }
+    .pkg-tab-panel .vuln-block {
+      margin-bottom: 1.25rem;
+      padding: 1.25rem;
+      border-left: 4px solid var(--border);
+      background: #fafafa;
+    }
+    .pkg-tab-panel .vuln-block:last-child { margin-bottom: 0; }
+    .pkg-tab-panel .vuln-block.severity-critical { border-left-color: var(--critical); background: var(--critical-bg); }
+    .pkg-tab-panel .vuln-block.severity-high { border-left-color: var(--high); background: var(--high-bg); }
+    .pkg-tab-panel .vuln-block.severity-medium { border-left-color: var(--medium); background: var(--medium-bg); }
+    .pkg-tab-panel .vuln-block.severity-low { border-left-color: var(--low); background: var(--low-bg); }
+    .pkg-tab-panel .vuln-block h4 { font-size: 0.95rem; margin: 0 0 0.5rem 0; }
+    .pkg-tab-panel .vuln-block .vuln-ids { font-family: ui-monospace, monospace; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem; }
+    .pkg-tab-panel .vuln-block .vuln-section { margin-top: 0.75rem; font-size: 0.9rem; }
+    .pkg-tab-panel .vuln-block details summary { cursor: pointer; font-weight: 600; font-size: 0.85rem; }
+    .pkg-tab-panel .vuln-block ul { margin: 0.25rem 0 0 1rem; padding-left: 1rem; }
+
+    .collapsible-section { background: var(--surface); border: 1px solid var(--border); margin-bottom: 1rem; }
+    .collapsible-section-header { width: 100%; padding: 1rem 1.25rem; cursor: pointer; display: flex; align-items: center; justify-content: space-between; background: var(--surface); border: none; font-family: inherit; font-size: 1.1rem; font-weight: 700; color: var(--text); text-align: left; }
+    .collapsible-section-header:hover { background: var(--gov-blue-light); }
+    .collapsible-section-body { padding: 1.25rem 1.5rem; display: none; border-top: 1px solid var(--border); }
+    .collapsible-section-body.open { display: block; }
+    .collapsible-section-header .expand-icon { font-size: 0.8rem; opacity: 0.7; }
+
+    footer.report-footer {
+      margin-top: 2.5rem;
+      padding: 1.25rem 1.5rem;
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-top: 3px solid var(--nav-bg);
+    }
+    footer.report-footer p { margin: 0.4rem 0; }
+    footer.report-footer a { color: var(--link); }
+
+    @media (max-width: 640px) {
+      .report-table { display: none; }
+      .vuln-cards { display: block; }
+      .kpi-grid { grid-template-columns: 1fr 1fr; }
+      .filters-row { flex-direction: column; align-items: stretch; }
+      .filters-row input, .filters-row select { min-width: 0; }
+      .stacked-chart .pkg-name { width: 8rem; }
+    }
+
+    @media print {
+      body { padding-top: 0; background: #fff; }
+      .skip-link, nav.report-nav, .filters-panel, .export-panel, .no-print, .pkg-tabs, .collapsible-section-header, #pkg-panels-data { display: none !important; }
+      .vuln-detail-expanded-row td { overflow: visible !important; }
+      .vuln-detail-expanded-inner { max-height: none !important; overflow: visible !important; page-break-inside: auto; }
+      .vuln-detail-expanded-row { page-break-inside: auto; }
+      .collapsible-section-body { display: block !important; }
+      .pkg-card-body { display: block !important; }
+      .pkg-card-header { cursor: default; }
+      .pkg-card.pkg-page-hidden { display: block !important; }
+      .pkg-card.hidden { display: block !important; }
+      .pkg-tab-panel { display: block !important; margin-top: 1.5rem; }
+      .pkg-tab-panel:first-child { margin-top: 0; }
+      .pkg-tab-panel.hidden { display: block !important; }
+      .pkg-panel-print-title { display: block !important; font-size: 1rem; margin: 0 0 0.75rem 0; padding-bottom: 0.35rem; border-bottom: 1px solid var(--border); }
+      .report-table tr.hidden { display: table-row !important; }
+      .vuln-cards { display: none !important; }
+      .report-table { display: table !important; }
+      section { break-inside: avoid; page-break-inside: avoid; }
+      .report-table, .report-table tbody { break-inside: auto; page-break-inside: auto; }
+      .report-table tr { page-break-inside: avoid; }
+      .report-table tr.vuln-detail-expanded-row { page-break-inside: auto; }
+      .pagination, .vuln-details-pagination { display: none !important; }
+      .report-table tr.vuln-row-page-hidden { display: table-row !important; }
+      .vuln-card.vuln-row-page-hidden { display: block !important; }
+      main.container { max-width: none; }
+      @page { margin: 1.5cm; }
+      footer.report-footer::before {
+        content: counter(page);
+        display: block;
+        margin-bottom: 0.5rem;
+        font-size: 0.75rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <nav class="report-nav" aria-label="Report sections">
+    <span class="nav-brand">Chifleton</span>
+    <a href="#overview">Overview</a>
+    <a href="#severity-chart">Severity Chart</a>
+    <a href="#vulnerability-details">Vulnerability Details</a>
+    <button type="button" class="nav-btn-pdf no-print" id="btn-pdf" aria-label="Export report as PDF">Export PDF</button>
+  </nav>
+
+  <main id="main-content" class="container" role="main">
+    <header class="report-header">
+      <h1>Dependency Vulnerability Scan Report</h1>
+      <p class="meta">Generated: {{ generated_at.strftime("%Y-%m-%d %H:%M UTC") }}</p>
+    </header>
+
+    <section id="overview" aria-labelledby="overview-heading">
+      <h2 id="overview-heading">Summary Dashboard</h2>
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <span class="kpi-value" aria-label="Total packages scanned">{{ package_count }}</span>
+          <span class="kpi-label">Packages scanned</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-value" aria-label="Vulnerable packages">{{ vulnerable_package_count }}</span>
+          <span class="kpi-label">With vulnerabilities</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-value" aria-label="Total vulnerabilities">{{ total_vulnerabilities }}</span>
+          <span class="kpi-label">Total vulnerabilities</span>
+        </div>
+        <div class="kpi-card highest-sev">
+          <span class="kpi-value {{ highest_severity | lower }}" aria-label="Highest severity">{{ highest_severity }}</span>
+          <span class="kpi-label">Highest severity</span>
+        </div>
+        {% if total_vulnerabilities > 0 and (fixable_count is defined or non_fixable_count is defined) %}
+        <div class="kpi-card">
+          <span class="kpi-value" aria-label="Fixable">{{ fixable_count | default(0) }}</span>
+          <span class="kpi-label">Fixable</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-value" aria-label="No fix available">{{ non_fixable_count | default(0) }}</span>
+          <span class="kpi-label">No fix available</span>
+        </div>
+        {% endif %}
+      </div>
+    </section>
+
+    <section id="severity-chart" aria-labelledby="severity-heading">
+      <h2 id="severity-heading">Severity Distribution</h2>
+      <div class="severity-charts-row">
+        <div class="severity-chart-card">
+          <h3>By severity level</h3>
+          <div class="severity-chart">
+            {% if total_sd > 0 %}
+            {% for label, key in [("Critical", "critical"), ("High", "high"), ("Medium", "medium"), ("Low", "low"), ("Unknown", "unknown")] %}
+            {% set count = sd[label] or 0 %}
+            {% set pct = (100 * count / total_sd) if total_sd else 0 %}
+            <div class="bar-row" role="listitem">
+              <span class="bar-label">{{ label }}</span>
+              <div class="bar-wrap" role="img" aria-label="{{ label }}: {{ count }} vulnerabilities">
+                <div class="bar-fill {{ key }}" style="width: {{ pct if pct >= 2 else 2 }}%;"></div>
+              </div>
+              <span class="bar-num">{{ count }}</span>
+            </div>
+            {% endfor %}
+            {% else %}
+            <p>No vulnerabilities in this scan.</p>
+            {% endif %}
+          </div>
+        </div>
+        {% if total_sd > 0 and vulnerable_package_count > 0 %}
+        <div class="severity-chart-card no-print" id="stacked-severity-by-pkg" aria-label="Severity breakdown by package">
+          <h3>Severity by package</h3>
+          <div class="stacked-chart">
+            <div id="stacked-chart-body"></div>
+          </div>
+        </div>
+        {% else %}
+        <div class="severity-chart-card">
+          <h3>Severity by package</h3>
+          <p class="chart-desc">No vulnerable packages in this scan.</p>
+        </div>
+        {% endif %}
+      </div>
+      <p class="chart-desc">Critical and High items should be prioritized for remediation.</p>
+    </section>
+
+    <section id="vulnerability-details" aria-labelledby="vuln-heading">
+      <h2 id="vuln-heading">Vulnerability Details</h2>
+      <div id="filters" class="filters-panel no-print" aria-labelledby="filters-heading">
+        <h3 id="filters-heading" style="font-size:1.1rem; margin:0 0 0.75rem 0;">Filters</h3>
+        <div class="filters-row">
+          <div class="filter-group">
+            <label for="filter-pkg">Package</label>
+            <input type="text" id="filter-pkg" class="filter-pkg" placeholder="Package name" aria-label="Filter by package name">
+          </div>
+          <div class="filter-group">
+            <label for="filter-id">Vulnerability ID</label>
+            <input type="text" id="filter-id" class="filter-id" placeholder="e.g. CVE-2024-" aria-label="Filter by vulnerability ID">
+          </div>
+          <div class="filter-group filter-group-multi">
+            <span class="filter-label">Severity</span>
+            <div class="filter-checkboxes" role="group" aria-label="Filter by severity">
+              <label class="filter-check"><input type="checkbox" name="filter-severity" value="Critical"> Critical</label>
+              <label class="filter-check"><input type="checkbox" name="filter-severity" value="High"> High</label>
+              <label class="filter-check"><input type="checkbox" name="filter-severity" value="Medium"> Medium</label>
+              <label class="filter-check"><input type="checkbox" name="filter-severity" value="Low"> Low</label>
+              <label class="filter-check"><input type="checkbox" name="filter-severity" value="Unknown"> Unknown</label>
+            </div>
+          </div>
+          <div class="filter-group filter-group-multi">
+            <span class="filter-label">Status</span>
+            <div class="filter-checkboxes" role="group" aria-label="Filter by status">
+              <label class="filter-check"><input type="checkbox" name="filter-status" value="Active"> Active</label>
+              <label class="filter-check"><input type="checkbox" name="filter-status" value="Fixed"> Fixed</label>
+              <label class="filter-check"><input type="checkbox" name="filter-status" value="Withdrawn"> Withdrawn</label>
+              <label class="filter-check"><input type="checkbox" name="filter-status" value="Unknown"> Unknown</label>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% if overview_rows %}
+      <div class="table-wrap">
+        <table class="report-table" id="vuln-table" aria-label="Vulnerabilities">
+          <thead>
+            <tr>
+              <th data-sort="package">Package</th>
+              <th data-sort="vuln_id">Vulnerability ID</th>
+              <th data-sort="severity">Severity</th>
+              <th data-sort="status">Status</th>
+              <th>Priority</th>
+              <th>Remediation</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in overview_rows %}
+            <tr class="vuln-detail-row" data-row-index="{{ loop.index0 }}" data-package="{{ row.package }} {{ row.version }}" data-package-lower="{{ (row.package ~ ' ' ~ row.version) | lower }}" data-vuln-id="{{ row.vuln_id }}" data-severity="{{ row.severity or 'Unknown' }}" data-status="{{ row.status }}" data-priority="{{ row.priority or '' }}">
+              <td>{{ row.package }} {{ row.version }}</td>
+              <td>{{ row.vuln_id }}</td>
+              <td><span class="badge {{ (row.severity | lower) if row.severity else 'unknown' }}">{{ row.severity or 'Unknown' }}</span></td>
+              <td><span class="badge status-{{ (row.status | lower) if row.status else 'unknown' }}">{{ row.status or 'Unknown' }}</span></td>
+              <td>{{ row.priority or '—' }}</td>
+              <td class="remediation-link"><button type="button" class="view-details-link link-style" data-pkg-id="pkg-{{ row.package }}-{{ row.version }}" aria-label="View package details">View details</button></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="vuln-cards" id="vuln-cards-mobile">
+        {% for row in overview_rows %}
+        <div class="vuln-card vuln-detail-row" data-row-index="{{ loop.index0 }}" data-package-lower="{{ (row.package ~ ' ' ~ row.version) | lower }}" data-vuln-id="{{ row.vuln_id }}" data-severity="{{ row.severity or 'Unknown' }}" data-status="{{ row.status }}">
+          <div class="vuln-card-pkg">{{ row.package }} {{ row.version }}</div>
+          <div class="vuln-card-id">{{ row.vuln_id }}</div>
+          <span class="badge {{ (row.severity | lower) if row.severity else 'unknown' }}">{{ row.severity or 'Unknown' }}</span>
+          <span class="badge status-{{ (row.status | lower) if row.status else 'unknown' }}">{{ row.status or 'Unknown' }}</span>
+          <button type="button" class="view-details-link link-style" data-pkg-id="pkg-{{ row.package }}-{{ row.version }}" aria-label="View package details">View details</button>
+        </div>
+        {% endfor %}
+      </div>
+      {% set vuln_row_count = overview_rows | length %}
+      {% if vuln_row_count > 20 %}
+      <nav class="vuln-details-pagination no-print" id="vuln-details-pagination" aria-label="Vulnerability details pages">
+        <button type="button" class="page-btn" id="vuln-page-prev" aria-label="Previous">Prev</button>
+        <span id="vuln-page-numbers"></span>
+        <span class="page-info" id="vuln-page-info">1 of {{ ((vuln_row_count / 20) | int) + (1 if vuln_row_count % 20 else 0) }}</span>
+        <button type="button" class="page-btn" id="vuln-page-next" aria-label="Next">Next</button>
+      </nav>
+      {% endif %}
+      {% else %}
+      <p>No vulnerabilities reported.</p>
+      {% endif %}
+    </section>
+
+    <div id="pkg-panels-data" class="hidden" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;">
+      {% for r in results %}
+      <div class="pkg-tab-panel" id="pkg-{{ r.name }}-{{ r.version }}" data-package-name="{{ r.name | lower }}" data-package-label="{{ r.name }}{% if r.version != '-' %} {{ r.version }}{% endif %}">
+        {% if r.vulns %}
+        {% for v in r.vulns %}
+        <div class="vuln-block severity-{{ (v.severity | lower) if v.severity else 'unknown' }}">
+          <h4>{{ v.ids | join(", ") or v.id or "Vulnerability" }}</h4>
+          {% if v.severity %}<span class="badge {{ (v.severity | lower) if v.severity else 'unknown' }}">{{ v.severity }}</span>{% endif %}
+          <p class="vuln-ids">{{ v.ids | join(", ") or v.id or "—" }}</p>
+          <div class="vuln-section"><strong>Summary</strong><br>{{ v.short_summary or "No summary. See references." }}{% if v.read_more_url %} <a href="{{ v.read_more_url }}" target="_blank" rel="noopener noreferrer">Read more</a>{% endif %}</div>
+          <div class="vuln-section"><strong>Remediation</strong><br>{{ v.remediation }}</div>
+          {% if v.recommended_action %}<div class="vuln-section"><strong>Recommended action</strong><br>{{ v.recommended_action }}</div>{% endif %}
+          {% if v.priority %}<div class="vuln-section"><strong>Priority</strong> {{ v.priority }}{% if v.remediation_risk %} · <strong>Remediation risk</strong> {{ v.remediation_risk }}{% endif %}{% if v.fix_available is not none %} · <strong>Fix available</strong> {{ 'Yes' if v.fix_available else 'No' }}{% endif %}</div>{% endif %}
+          {% if v.references %}
+          <details class="vuln-section">
+            <summary>References ({{ v.ref_count }})</summary>
+            <ul>
+              {% for ref in v.references %}
+              <li><a href="{{ ref }}" target="_blank" rel="noopener noreferrer">{{ ref }}</a></li>
+              {% endfor %}
+            </ul>
+          </details>
+          {% endif %}
+        </div>
+        {% endfor %}
+        {% else %}
+        <p>No known vulnerabilities for this package.</p>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <section id="remediation-guidance" class="collapsible-section" aria-labelledby="remediation-guidance-heading">
+      <button type="button" class="collapsible-section-header no-print" aria-expanded="false" aria-controls="remediation-guidance-body" id="remediation-guidance-heading">Remediation Guidance<span class="expand-icon">▼</span></button>
+      <div class="collapsible-section-body" id="remediation-guidance-body">
+      <h2 style="margin:0 0 1rem 0; font-size:1rem;">Remediation Guidance</h2>
+      <p>This section provides actionable remediation guidance for vulnerabilities detected in the dependency analysis. The purpose is not only to identify known vulnerabilities, but to support informed, auditable decision-making in accordance with secure software development and supply chain risk management practices.</p>
+      <p>For each identified vulnerability, Chifleton evaluates:</p>
+      <ul>
+        <li><strong>Fix availability</strong> — patched or non-patched</li>
+        <li><strong>Recommended remediation action</strong></li>
+        <li><strong>Remediation priority</strong>, based on severity and exploitability</li>
+        <li><strong>Potential impact of remediation</strong>, including compatibility or breaking-change risk</li>
+      </ul>
+      <h3>Recommended Actions</h3>
+      <p>Remediation actions fall into the following categories:</p>
+      <ul>
+        <li><strong>Upgrade dependency</strong> — A fixed version is available and upgrading is the preferred mitigation.</li>
+        <li><strong>Replace dependency</strong> — The dependency is unmaintained, end-of-life, or presents systemic risk.</li>
+        <li><strong>Remove dependency</strong> — The dependency is unused or non-essential and can be safely eliminated.</li>
+        <li><strong>Apply workaround / mitigation</strong> — No official fix exists; compensating controls or configuration changes are recommended.</li>
+        <li><strong>Monitor and document risk acceptance</strong> — No fix is currently available and removal is not feasible. Risk should be documented and periodically reviewed.</li>
+      </ul>
+      <h3>Remediation Priority Levels</h3>
+      <ul>
+        <li><strong>Immediate</strong> — Critical or High severity with known exploits or high exposure.</li>
+        <li><strong>Planned</strong> — Medium severity or fix available with moderate effort.</li>
+        <li><strong>Monitor</strong> — Low severity, no active exploit, or no fix available.</li>
+      </ul>
+      <h3>Audit and Evidence Considerations</h3>
+      <p>Chifleton remediation guidance is designed to be:</p>
+      <ul>
+        <li>Deterministic and reproducible</li>
+        <li>Traceable to public vulnerability databases (e.g., OSV.dev)</li>
+        <li>Suitable for inclusion in audit reports, SBOM reviews, and compliance documentation</li>
+      </ul>
+      <p>Final remediation decisions remain the responsibility of the project maintainer or organization and should be documented as part of the secure development lifecycle.</p>
+      </div>
+    </section>
+
+    {% if include_guidance and improvement_recommendations %}
+    <section id="improvement-checklist" aria-labelledby="improvement-heading">
+      <h2 id="improvement-heading">Improvement Checklist</h2>
+      <p class="chart-desc">Project-level recommendations for secure supply chain (EO 14028, NIST SSDF, CISA).</p>
+      <ul style="max-width: 65ch;">
+        {% for rec in improvement_recommendations %}
+        <li><strong>{{ rec.title }}</strong> — {{ rec.description }} <span class="badge medium">Effort: {{ rec.effort }}</span> <span class="badge low">Impact: {{ rec.security_impact }}</span></li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+    <section id="data-source" class="collapsible-section" aria-labelledby="data-source-heading">
+      <button type="button" class="collapsible-section-header no-print" aria-expanded="false" aria-controls="data-source-body" id="data-source-heading">Data Source &amp; Metadata<span class="expand-icon">▼</span></button>
+      <div class="collapsible-section-body" id="data-source-body">
+      <h2 style="margin:0 0 1rem 0; font-size:1rem;">Data Source &amp; Metadata</h2>
+      <dl class="data-source-meta">
+        <dt>Source</dt>
+        <dd>OSV (Open Source Vulnerabilities) — <a href="https://osv.dev" target="_blank" rel="noopener noreferrer">osv.dev</a>{% if ecosystem %} ({{ ecosystem }}){% endif %}</dd>
+        {% if input_label %}<dt>Input</dt><dd>{{ input_label }}</dd>{% endif %}
+        <dt>Query / report timestamp</dt>
+        <dd>{{ generated_at.strftime("%Y-%m-%d %H:%M:%S UTC") }}</dd>
+        <dt>Scanner version</dt>
+        <dd>Chifleton {{ scanner_version }}</dd>
+        <dt>Report author</dt>
+        <dd>{{ report_author }}</dd>
+      </dl>
+      </div>
+    </section>
+
+    <section id="executive-summary" class="collapsible-section" aria-labelledby="executive-summary-heading">
+      <button type="button" class="collapsible-section-header no-print" aria-expanded="false" aria-controls="executive-summary-body" id="executive-summary-heading">Executive Summary<span class="expand-icon">▼</span></button>
+      <div class="collapsible-section-body" id="executive-summary-body">
+      <p>This report presents the results of a dependency vulnerability scan of your project. It identifies known vulnerabilities (CVEs and OSV advisories) in declared dependencies and supports compliance review and audit evidence for U.S. federal guidance (e.g., EO 14028, NIST SSDF, CISA supply chain). The summary dashboard shows total packages scanned, packages with vulnerabilities, and total vulnerability counts. Report metadata (timestamp, scanner version, author, data source) is in <a href="#data-source">Data Source &amp; Metadata</a>.</p>
+      </div>
+    </section>
+
+    <footer class="report-footer">
+      <p><strong>Chifleton</strong> — Dependency vulnerability scan report. Data source: OSV (Open Source Vulnerabilities). For questions, see <a href="#data-source">Data Source &amp; Metadata</a> or contact the report author.</p>
+      <p>© {{ generated_at.strftime("%Y") }} {{ report_author }}. Chifleton is provided as-is for compliance and audit support.</p>
+    </footer>
+  </main>
+
+  <script>
+(function() {
+  var filterPkg = document.getElementById('filter-pkg');
+  var filterId = document.getElementById('filter-id');
+  var tbody = document.querySelector('#vuln-table tbody');
+  var vulnCards = document.querySelectorAll('.vuln-card');
+  var pkgCards = document.querySelectorAll('.pkg-card');
+  var table = document.getElementById('vuln-table');
+
+  function getSelectedSeverities() {
+    var chk = document.querySelectorAll('input[name="filter-severity"]:checked');
+    return Array.from(chk).map(function(c) { return c.value; });
+  }
+  function getSelectedStatuses() {
+    var chk = document.querySelectorAll('input[name="filter-status"]:checked');
+    return Array.from(chk).map(function(c) { return c.value; });
+  }
+
+  function applyFilters() {
+    var pkg = (filterPkg && filterPkg.value) ? filterPkg.value.trim().toLowerCase() : '';
+    var id = (filterId && filterId.value) ? filterId.value.trim().toLowerCase() : '';
+    var sevList = getSelectedSeverities();
+    var statusList = getSelectedStatuses();
+    var rows = tbody ? tbody.querySelectorAll('tr.vuln-detail-row') : [];
+    rows.forEach(function(tr) {
+      var p = (tr.getAttribute('data-package-lower') || tr.getAttribute('data-package') || '').toLowerCase();
+      var vid = (tr.getAttribute('data-vuln-id') || '').toLowerCase();
+      var s = tr.getAttribute('data-severity') || '';
+      var st = tr.getAttribute('data-status') || '';
+      var show = (!pkg || p.indexOf(pkg) !== -1) && (!id || vid.indexOf(id) !== -1) && (sevList.length === 0 || sevList.indexOf(s) !== -1) && (statusList.length === 0 || statusList.indexOf(st) !== -1);
+      tr.classList.toggle('hidden', !show);
+    });
+    if (tbody) {
+      tbody.querySelectorAll('tr.vuln-detail-expanded-row').forEach(function(tr) {
+        var prev = tr.previousElementSibling;
+        tr.classList.toggle('hidden', prev && prev.classList.contains('hidden'));
+      });
+    }
+    vulnCards.forEach(function(card) {
+      var p = (card.getAttribute('data-package-lower') || '').toLowerCase();
+      var vid = (card.getAttribute('data-vuln-id') || '').toLowerCase();
+      var s = card.getAttribute('data-severity') || '';
+      var st = card.getAttribute('data-status') || '';
+      var show = (!pkg || p.indexOf(pkg) !== -1) && (!id || vid.indexOf(id) !== -1) && (sevList.length === 0 || sevList.indexOf(s) !== -1) && (statusList.length === 0 || statusList.indexOf(st) !== -1);
+      card.classList.toggle('hidden', !show);
+    });
+    pkgCards.forEach(function(card) {
+      var name = (card.getAttribute('data-package-name') || '').toLowerCase();
+      var show = !pkg || name.indexOf(pkg) !== -1;
+      card.classList.toggle('hidden', !show);
+    });
+    removeExpandedRow();
+    if (typeof showVulnPage === 'function') showVulnPage(1);
+    buildPieChart();
+  }
+
+  if (filterPkg) filterPkg.addEventListener('input', applyFilters);
+  if (filterId) filterId.addEventListener('input', applyFilters);
+  document.querySelectorAll('input[name="filter-severity"]').forEach(function(c) { c.addEventListener('change', applyFilters); });
+  document.querySelectorAll('input[name="filter-status"]').forEach(function(c) { c.addEventListener('change', applyFilters); });
+
+  function buildPieChart() {
+    var container = document.getElementById('stacked-chart-body');
+    if (!container || !tbody) return;
+    var rows = tbody.querySelectorAll('tr:not(.hidden)');
+    var byPkg = {};
+    rows.forEach(function(tr) {
+      var pkg = tr.getAttribute('data-package') || tr.getAttribute('data-package-lower') || 'Unknown';
+      if (!byPkg[pkg]) byPkg[pkg] = 0;
+      byPkg[pkg]++;
+    });
+    var total = 0;
+    var pkgsAll = Object.keys(byPkg);
+    pkgsAll.forEach(function(p) { total += byPkg[p]; });
+    if (total === 0) { container.innerHTML = '<p>No data</p>'; return; }
+    var TOP_N = 6;
+    pkgsAll.sort(function(a, b) { return byPkg[b] - byPkg[a]; });
+    var displayPkgs = pkgsAll.slice(0, TOP_N);
+    var othersCount = 0;
+    if (pkgsAll.length > TOP_N) {
+      for (var i = TOP_N; i < pkgsAll.length; i++) othersCount += byPkg[pkgsAll[i]];
+      displayPkgs.push('__Others__');
+    }
+    var palette = ['#c53030', '#dd6b20', '#d69e2e', '#38a169', '#3182ce', '#805ad5', '#d53f8c', '#00b5d8', '#68d391', '#f6e05e', '#9f7aea'];
+    var wrap = document.createElement('div');
+    wrap.className = 'pie-chart-wrap';
+    var circle = document.createElement('div');
+    circle.className = 'pie-chart-circle';
+    circle.setAttribute('role', 'img');
+    circle.setAttribute('aria-label', 'Severity by package');
+    var cum = 0;
+    var conicParts = displayPkgs.map(function(p, i) {
+      var n = p === '__Others__' ? othersCount : byPkg[p];
+      var pct = 100 * n / total;
+      var start = cum;
+      cum += pct;
+      var color = palette[i % palette.length];
+      return color + ' ' + start + '% ' + cum + '%';
+    });
+    circle.style.background = 'conic-gradient(' + conicParts.join(', ') + ')';
+    wrap.appendChild(circle);
+    var leg = document.createElement('ul');
+    leg.className = 'pie-chart-legend';
+    displayPkgs.forEach(function(p, i) {
+      var li = document.createElement('li');
+      var n = p === '__Others__' ? othersCount : byPkg[p];
+      var pct = (100 * n / total).toFixed(1);
+      var label = p === '__Others__' ? 'Others' + (pkgsAll.length > TOP_N ? ' (' + (pkgsAll.length - TOP_N) + ' packages)' : '') : (p.length > 28 ? p.slice(0, 25) + '…' : p);
+      li.title = p === '__Others__'
+        ? ('Others: ' + n + ' vulnerabilities, ' + pct + '% (' + (pkgsAll.length - TOP_N) + ' packages)')
+        : (p + ' — ' + n + ' vulnerabilities, ' + pct + '%');
+      var dot = document.createElement('span');
+      dot.className = 'pie-legend-dot';
+      dot.style.background = palette[i % palette.length];
+      li.appendChild(dot);
+      li.appendChild(document.createTextNode(label));
+      var pctEl = document.createElement('span');
+      pctEl.className = 'pie-legend-pct';
+      pctEl.textContent = pct + '%';
+      li.appendChild(pctEl);
+      leg.appendChild(li);
+    });
+    wrap.appendChild(leg);
+    container.innerHTML = '';
+    container.appendChild(wrap);
+  }
+  if (document.getElementById('stacked-chart-body')) buildPieChart();
+
+  var tbodyVuln = document.querySelector('#vuln-table tbody');
+  var COLSPAN = 6;
+  function removeExpandedRow() {
+    var existing = tbodyVuln && tbodyVuln.querySelector('tr.vuln-detail-expanded-row');
+    if (existing) existing.remove();
+  }
+  function findPanelForPackage(pkgId, rowPackageLabel) {
+    var panel = document.getElementById(pkgId);
+    if (panel) return panel;
+    var container = document.getElementById('pkg-panels-data');
+    if (!container) return null;
+    if (rowPackageLabel) {
+      var panels = container.querySelectorAll('.pkg-tab-panel');
+      for (var i = 0; i < panels.length; i++) {
+        if (panels[i].getAttribute('data-package-label') === rowPackageLabel) return panels[i];
+      }
+    }
+    return null;
+  }
+  function keepOnlyVulnBlock(container, vulnId) {
+    if (!vulnId) return;
+    var blocks = container.querySelectorAll('.vuln-block');
+    blocks.forEach(function(block) {
+      var idEl = block.querySelector('.vuln-ids') || block.querySelector('h4');
+      var text = (idEl && idEl.textContent) ? idEl.textContent : block.textContent;
+      if (text.indexOf(vulnId) === -1) block.remove();
+    });
+  }
+  function insertExpandedRowAfter(clickedRow, pkgId, forPrint) {
+    var vulnId = clickedRow.getAttribute('data-vuln-id') || '';
+    var rowPackageLabel = clickedRow.getAttribute('data-package') || (clickedRow.querySelector('td') && clickedRow.querySelector('td').textContent.trim()) || '';
+    var panel = findPanelForPackage(pkgId, rowPackageLabel);
+    if (!panel || !tbodyVuln) return;
+    var tr = document.createElement('tr');
+    tr.className = 'vuln-detail-expanded-row' + (forPrint ? '' : ' no-print');
+    var td = document.createElement('td');
+    td.setAttribute('colspan', COLSPAN);
+    var inner = document.createElement('div');
+    inner.className = 'vuln-detail-expanded-inner';
+    var contentWrap = document.createElement('div');
+    contentWrap.innerHTML = panel.innerHTML;
+    keepOnlyVulnBlock(contentWrap, vulnId);
+    inner.appendChild(contentWrap);
+    td.appendChild(inner);
+    tr.appendChild(td);
+    clickedRow.parentNode.insertBefore(tr, clickedRow.nextSibling);
+  }
+  function openExpandBelowRow(clickedRow, pkgId) {
+    var next = clickedRow.nextElementSibling;
+    if (next && next.classList && next.classList.contains('vuln-detail-expanded-row')) {
+      next.remove();
+      return;
+    }
+    removeExpandedRow();
+    insertExpandedRowAfter(clickedRow, pkgId, false);
+  }
+  function expandAllRowsForPrint() {
+    if (!tbodyVuln) return;
+    var rows = tbodyVuln.querySelectorAll('tr.vuln-detail-row:not(.hidden)');
+    rows.forEach(function(row) {
+      if (row.nextElementSibling && row.nextElementSibling.classList.contains('vuln-detail-expanded-row')) return;
+      var btn = row.querySelector('.view-details-link');
+      var pkgId = btn && btn.getAttribute('data-pkg-id');
+      if (pkgId) insertExpandedRowAfter(row, pkgId, true);
+    });
+  }
+  window.addEventListener('beforeprint', expandAllRowsForPrint);
+  document.addEventListener('click', function(e) {
+    var btn = e.target.closest('.view-details-link');
+    if (!btn || !btn.getAttribute('data-pkg-id')) return;
+    e.preventDefault();
+    var pkgId = btn.getAttribute('data-pkg-id');
+    var row = btn.closest('tr.vuln-detail-row');
+    if (row) {
+      openExpandBelowRow(row, pkgId);
+      return;
+    }
+    var card = btn.closest('.vuln-card');
+    if (card) {
+      var detailEl = card.nextElementSibling;
+      if (detailEl && detailEl.classList && detailEl.classList.contains('vuln-card-detail')) {
+        if (detailEl.classList.contains('open')) {
+          detailEl.classList.remove('open');
+          detailEl.innerHTML = '';
+          return;
+        }
+      }
+      document.querySelectorAll('.vuln-card-detail.open').forEach(function(d) { d.classList.remove('open'); d.innerHTML = ''; });
+      var cardLabel = card.querySelector('.vuln-card-pkg') && card.querySelector('.vuln-card-pkg').textContent.trim();
+      var vulnId = card.getAttribute('data-vuln-id') || '';
+      var panel = findPanelForPackage(pkgId, cardLabel);
+      if (!panel) return;
+      if (!detailEl || !detailEl.classList.contains('vuln-card-detail')) {
+        detailEl = document.createElement('div');
+        detailEl.className = 'vuln-card-detail';
+        card.parentNode.insertBefore(detailEl, card.nextSibling);
+      }
+      detailEl.innerHTML = '';
+      var contentWrap = document.createElement('div');
+      contentWrap.innerHTML = panel.innerHTML;
+      keepOnlyVulnBlock(contentWrap, vulnId);
+      detailEl.appendChild(contentWrap);
+      detailEl.classList.add('open');
+    }
+  });
+
+  var VULN_PER_PAGE = 10;
+  var vulnTableRows = document.querySelectorAll('#vuln-table tbody tr.vuln-detail-row');
+  var vulnCardRows = document.querySelectorAll('#vuln-cards-mobile .vuln-detail-row');
+  var vulnPageNumbersEl = document.getElementById('vuln-page-numbers');
+  var vulnPageInfo = document.getElementById('vuln-page-info');
+  var vulnBtnPrev = document.getElementById('vuln-page-prev');
+  var vulnBtnNext = document.getElementById('vuln-page-next');
+  var vulnPaginationNav = document.getElementById('vuln-details-pagination');
+  var vulnCurrentPage = 1;
+
+  function showVulnPage(page) {
+    removeExpandedRow();
+    var visibleRows = tbody ? tbody.querySelectorAll('tr.vuln-detail-row:not(.hidden)') : [];
+    var visibleCount = visibleRows.length;
+    var vulnTotalPages = visibleCount > 0 ? Math.ceil(visibleCount / VULN_PER_PAGE) : 1;
+    vulnCurrentPage = Math.max(1, Math.min(page, vulnTotalPages));
+    var start = (vulnCurrentPage - 1) * VULN_PER_PAGE;
+    var end = start + VULN_PER_PAGE;
+    var visibleArr = Array.from(visibleRows);
+    for (var i = 0; i < vulnTableRows.length; i++) {
+      var idx = visibleArr.indexOf(vulnTableRows[i]);
+      var show = idx !== -1 && idx >= start && idx < end;
+      vulnTableRows[i].classList.toggle('vuln-row-page-hidden', !show);
+      if (vulnCardRows[i]) vulnCardRows[i].classList.toggle('vuln-row-page-hidden', !show);
+    }
+    var expandedRows = tbody ? tbody.querySelectorAll('tr.vuln-detail-expanded-row') : [];
+    expandedRows.forEach(function(tr) {
+      var prev = tr.previousElementSibling;
+      tr.classList.toggle('vuln-row-page-hidden', prev && prev.classList.contains('vuln-row-page-hidden'));
+    });
+    if (vulnPageInfo) vulnPageInfo.textContent = vulnCurrentPage + ' of ' + vulnTotalPages;
+    if (vulnBtnPrev) vulnBtnPrev.disabled = vulnCurrentPage <= 1;
+    if (vulnBtnNext) vulnBtnNext.disabled = vulnCurrentPage >= vulnTotalPages;
+    if (vulnPageNumbersEl) {
+      vulnPageNumbersEl.innerHTML = '';
+      if (vulnTotalPages <= 20) {
+        for (var p = 1; p <= vulnTotalPages; p++) {
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'page-btn' + (p === vulnCurrentPage ? ' active' : '');
+          b.textContent = p;
+          b.setAttribute('aria-label', String(p));
+          b.addEventListener('click', function(num) { return function() { showVulnPage(num); }; }(p));
+          vulnPageNumbersEl.appendChild(b);
+        }
+      }
+    }
+    if (vulnPaginationNav) vulnPaginationNav.style.display = vulnTotalPages > 1 ? '' : 'none';
+  }
+
+  if (vulnTableRows.length > 0) {
+    if (vulnBtnPrev) vulnBtnPrev.addEventListener('click', function() { showVulnPage(vulnCurrentPage - 1); });
+    if (vulnBtnNext) vulnBtnNext.addEventListener('click', function() { showVulnPage(vulnCurrentPage + 1); });
+    showVulnPage(1);
+  }
+
+  function applyHashToPkgTab() {
+    var hash = window.location.hash.slice(1);
+    if (!hash || hash.indexOf('pkg-') !== 0 || !document.getElementById(hash)) return;
+    var firstBtn = document.querySelector('tr.vuln-detail-row:not(.hidden) .view-details-link[data-pkg-id="' + hash + '"]');
+    if (firstBtn) {
+      var row = firstBtn.closest('tr');
+      if (row) openExpandBelowRow(row, hash);
+    }
+  }
+  if (window.location.hash) applyHashToPkgTab();
+  window.addEventListener('hashchange', applyHashToPkgTab);
+
+  if (table && table.tHead) {
+    table.tHead.addEventListener('click', function(e) {
+      var th = e.target.closest('th[data-sort]');
+      if (!th) return;
+      var tbody = table.tBodies[0];
+      var allRows = Array.from(tbody.rows);
+      var dir = th.getAttribute('aria-sort') === 'ascending' ? -1 : 1;
+      th.setAttribute('aria-sort', th.getAttribute('aria-sort') === 'ascending' ? 'descending' : 'ascending');
+      var idx = Array.from(table.tHead.rows[0].cells).indexOf(th);
+      allRows.sort(function(a, b) {
+        var va = a.cells[idx] ? a.cells[idx].textContent.trim() : '';
+        var vb = b.cells[idx] ? b.cells[idx].textContent.trim() : '';
+        return dir * (va < vb ? -1 : va > vb ? 1 : 0);
+      });
+      allRows.forEach(function(r) { tbody.appendChild(r); });
+    });
+  }
+
+  document.querySelectorAll('.collapsible-section-header').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var body = document.getElementById(btn.getAttribute('aria-controls'));
+      if (!body) return;
+      var open = body.classList.toggle('open');
+      btn.setAttribute('aria-expanded', open);
+      btn.querySelector('.expand-icon').textContent = open ? '▲' : '▼';
+    });
+  });
+
+  var btnPdf = document.getElementById('btn-pdf');
+  if (btnPdf) btnPdf.addEventListener('click', function() { window.print(); });
+
+  document.querySelectorAll('a[href^="#"]').forEach(function(a) {
+    a.addEventListener('click', function(e) {
+      var id = a.getAttribute('href').slice(1);
+      if (!id) return;
+      if (id.indexOf('pkg-') === 0) {
+        e.preventDefault();
+        var firstBtn = document.querySelector('tr.vuln-detail-row:not(.hidden) .view-details-link[data-pkg-id="' + id + '"]');
+        if (firstBtn) { var row = firstBtn.closest('tr'); if (row) openExpandBelowRow(row, id); }
+        var el = document.getElementById('vulnerability-details');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+      var el = document.getElementById(id);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+})();
+  </script>
+</body>
+</html>

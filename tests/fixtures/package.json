@@ -1,0 +1,28 @@
+{
+  "name": "sample-node-app",
+  "version": "1.0.0",
+  "description": "Sample package.json for Chifleton Node scanner testing (intentionally old/vulnerable versions)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "next dev",
+    "build": "next build"
+  },
+  "dependencies": {
+    "next": "10.0.0",
+    "react": "17.0.2",
+    "react-dom": "17.0.2",
+    "vue": "2.6.14",
+    "express": "4.17.1",
+    "lodash": "4.17.15",
+    "axios": "0.21.1",
+    "node-fetch": "2.6.0",
+    "minimist": "1.2.0"
+  },
+  "devDependencies": {
+    "typescript": "4.5.0"
+  },
+  "engines": {
+    "node": ">=14"
+  }
+}

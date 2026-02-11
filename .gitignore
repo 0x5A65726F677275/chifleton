@@ -1,0 +1,25 @@
+# Generated scan reports (CI or local)
+scan-report.html
+scan-report.json
+reports/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg-info
+.eggs/
+dist/
+build/
+.venv/
+venv/
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store

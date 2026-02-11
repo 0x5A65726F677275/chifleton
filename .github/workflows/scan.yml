@@ -1,0 +1,45 @@
+# Run Chifleton on requirements.txt; write HTML and JSON reports to reports/ and upload as artifacts.
+# Aligns with U.S. software supply chain security visibility and evidence-ready outputs (EO 14028, NIST SSDF, CISA).
+
+name: Scan
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Chifleton
+        run: pip install .
+        working-directory: .
+
+      - name: Run Chifleton (HTML + JSON)
+        run: |
+          chifleton scan requirements.txt --report html
+          chifleton scan requirements.txt --report json
+        working-directory: .
+
+      - name: Publish reports to reports/
+        run: |
+          mkdir -p reports
+          cp scan-report.html reports/
+          cp scan-report.json reports/
+
+      - name: Upload report artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-reports
+          path: reports/

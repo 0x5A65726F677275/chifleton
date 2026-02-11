@@ -1,0 +1,46 @@
+# Run Chifleton on requirements.txt and publish HTML + JSON reports as artifacts.
+# Supports supply chain visibility and evidence-ready outputs for EO 14028 / NIST SSDF alignment.
+
+name: Dependency vulnerability scan
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Chifleton
+        run: |
+          pip install .
+        working-directory: .
+
+      - name: Run Chifleton (HTML + JSON reports)
+        run: |
+          chifleton scan requirements.txt --report html
+          chifleton scan requirements.txt --report json
+        working-directory: .
+
+      - name: Upload HTML report
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-report-html
+          path: scan-report.html
+
+      - name: Upload JSON report
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-report-json
+          path: scan-report.json
