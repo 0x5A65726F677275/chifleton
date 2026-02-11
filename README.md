@@ -83,11 +83,6 @@ Requires **Python 3.10+**.
 To use the `chifleton` command globally without cloning the repo:
 
 ```bash
-# From PyPI (when the package is published)
-pip install chifleton
-# Or isolated global install
-pipx install chifleton
-
 # From GitHub (no clone)
 pip install "git+https://github.com/0x5A65726F677275/Chifleton.git"
 # Or
