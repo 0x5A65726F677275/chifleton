@@ -18,15 +18,16 @@ Designed for maintainers and small teams, Chifleton provides transparent depende
 ## Quick Start
 
 ```bash
-pip install .
-chifleton scan requirements.txt --report html
+
+pip install chifleton
+chifleton scan requirements.txt 
 # Open scan-report.html
 ```
 
 1. **Install** (from the project directory):
 
    ```bash
-   pip install .
+   pip install chifleton
    ```
 
 2. **Create a sample `requirements.txt`** (or use your own):
